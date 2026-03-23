@@ -2,12 +2,16 @@ import { create } from "zustand";
 import { immer } from 'zustand/middleware/immer'
 import { enableMapSet } from 'immer'
 import { uploadFileToStorage } from "../http/upload-file-to-storage";
+import { CanceledError } from "axios";
+import { useShallow } from "zustand/shallow";
 
 export type Upload = {
   name: string;
   file: File;
   abortController: AbortController;
   status: 'inProgress' | 'completed' | 'error' | 'canceled';
+  originalSizeInBytes: number;
+  uploadSizeInBytes: number;
 }
 
 type UploadState = {
@@ -20,6 +24,16 @@ enableMapSet();
 
 export const useUploads = create<UploadState, [["zustand/immer", never]]>(
   immer((set, get) => {
+    function updateUpload(uploadId: string, data: Partial<Upload>) {
+      const upload = get().uploads.get(uploadId);
+
+      if (!upload) return;
+
+      set(state => {
+        state.uploads.set(uploadId, { ...upload, ...data });
+      })
+    }
+
     async function processUpload(uploadId: string) {
       const upload = get().uploads.get(uploadId);
 
@@ -27,23 +41,23 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
 
       try {
         await uploadFileToStorage(
-          { file: upload.file },
+          {
+            file: upload.file,
+            onProgress: (sizeInBytes) => {
+              updateUpload(uploadId, { uploadSizeInBytes: sizeInBytes });
+            }
+          },
           { signal: upload.abortController.signal },
-        )
+        );
 
-        set(state => {
-          state.uploads.set(uploadId, {
-            ...upload,
-            status: 'completed',
-          })
-        })
-      } catch {
-        set(state => {
-          state.uploads.set(uploadId, {
-            ...upload,
-            status: 'error',
-          })
-        })
+        updateUpload(uploadId, { status: 'completed' });
+      } catch (error) {
+        if (error instanceof CanceledError) {
+          updateUpload(uploadId, { status: 'canceled' });
+          return;
+        }
+
+        updateUpload(uploadId, { status: 'error' });
       }
     }
 
@@ -53,13 +67,6 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
       if (!upload) return;
 
       upload.abortController.abort();
-
-      set(state => {
-        state.uploads.set(uploadId, {
-          ...upload,
-          status: 'canceled'
-        })
-      })
     }
 
     function addUploads(files: File[]) {
@@ -71,7 +78,9 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
           name: file.name,
           file,
           abortController,
-          status: 'inProgress'
+          status: 'inProgress',
+          originalSizeInBytes: file.size,
+          uploadSizeInBytes: 0,
         }
 
         set(state => {
@@ -89,3 +98,31 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
     }
   })
 )
+
+export const usePendingUploads = () => {
+  return useUploads(useShallow(store => {
+    const isThereAnyPendingUpload = Array
+      .from(store.uploads.values())
+      .some(upload => upload.status === 'inProgress');
+
+    if (!isThereAnyPendingUpload) {
+      return { isThereAnyPendingUpload, globalPercentage: 100 }
+    }
+
+    const { total, uploaded } = Array.from(store.uploads.values()).reduce(
+      (accumulator, upload) => {
+        accumulator.total += upload.originalSizeInBytes;
+        accumulator.uploaded += upload.uploadSizeInBytes;
+        return accumulator
+      },
+      { total: 0, uploaded: 0 }
+    )
+
+    const globalPercentage = Math.min(
+      Math.round((uploaded * 100) / total),
+      100,
+    )
+
+    return { isThereAnyPendingUpload, globalPercentage }
+  }))
+}
