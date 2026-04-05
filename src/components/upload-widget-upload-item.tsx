@@ -17,7 +17,9 @@ export function UploadWidgetUploadItem({
   const cancelUpload = useUploads(state => state.cancelUpload);
 
   const progress = Math.min(
-    Math.round((upload.uploadSizeInBytes * 100) / upload.originalSizeInBytes),
+    upload.compressedSizeInBytes
+      ? Math.round((upload.uploadSizeInBytes * 100) / upload.compressedSizeInBytes)
+      : 0,
     100,
   )
 
@@ -63,17 +65,21 @@ export function UploadWidgetUploadItem({
 
       <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
         <Button disabled={upload.status !== 'completed'} size="icon-sm">
-          <Download className="size-4" strokeWidth={1.5}/>
+          <Download className="size-4" strokeWidth={1.5} />
           <span className="sr-only">Download compressed image</span>
         </Button>
 
-        <Button disabled={upload.status !== 'completed'} size="icon-sm">
-          <Link2 className="size-4" strokeWidth={1.5}/>
+        <Button
+          disabled={!upload.remoteUrl}
+          size="icon-sm"
+          onClick={() => upload.remoteUrl && navigator.clipboard.writeText(upload.remoteUrl)}
+        >
+          <Link2 className="size-4" strokeWidth={1.5} />
           <span className="sr-only">Copy remote URL</span>
         </Button>
 
         <Button disabled={!['canceled', 'error'].includes(upload.status)} size="icon-sm">
-          <RefreshCcw className="size-4" strokeWidth={1.5}/>
+          <RefreshCcw className="size-4" strokeWidth={1.5} />
           <span className="sr-only">Retry upload</span>
         </Button>
 
@@ -82,7 +88,7 @@ export function UploadWidgetUploadItem({
           size="icon-sm"
           onClick={() => cancelUpload(uploadId)}
         >
-          <X className="size-4" strokeWidth={1.5}/>
+          <X className="size-4" strokeWidth={1.5} />
           <span className="sr-only">Cancel upload</span>
         </Button>
       </div>
