@@ -4,6 +4,7 @@ import { enableMapSet } from 'immer'
 import { uploadFileToStorage } from "../http/upload-file-to-storage";
 import { CanceledError } from "axios";
 import { useShallow } from "zustand/shallow";
+import { compressImage } from "../utils/compress-image";
 
 export type Upload = {
   name: string;
@@ -11,7 +12,9 @@ export type Upload = {
   abortController: AbortController;
   status: 'inProgress' | 'completed' | 'error' | 'canceled';
   originalSizeInBytes: number;
+  compressedSizeInBytes?: number;
   uploadSizeInBytes: number;
+  remoteUrl?: string;
 }
 
 type UploadState = {
@@ -40,9 +43,18 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
       if (!upload) return;
 
       try {
-        await uploadFileToStorage(
+        const compressedFile = await compressImage({
+          file: upload.file,
+          maxWidth: 1000,
+          maxHeight: 1000,
+          quality: 0.8,
+        })
+
+        updateUpload(uploadId, { compressedSizeInBytes: compressedFile.size })
+
+        const { url } = await uploadFileToStorage(
           {
-            file: upload.file,
+            file: compressedFile,
             onProgress: (sizeInBytes) => {
               updateUpload(uploadId, { uploadSizeInBytes: sizeInBytes });
             }
@@ -50,7 +62,7 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
           { signal: upload.abortController.signal },
         );
 
-        updateUpload(uploadId, { status: 'completed' });
+        updateUpload(uploadId, { status: 'completed', remoteUrl: url });
       } catch (error) {
         if (error instanceof CanceledError) {
           updateUpload(uploadId, { status: 'canceled' });
@@ -111,8 +123,10 @@ export const usePendingUploads = () => {
 
     const { total, uploaded } = Array.from(store.uploads.values()).reduce(
       (accumulator, upload) => {
-        accumulator.total += upload.originalSizeInBytes;
-        accumulator.uploaded += upload.uploadSizeInBytes;
+        if (upload.compressedSizeInBytes) {
+          accumulator.uploaded += upload.uploadSizeInBytes;
+        }
+        accumulator.total += upload.compressedSizeInBytes || upload.originalSizeInBytes;
         return accumulator
       },
       { total: 0, uploaded: 0 }
