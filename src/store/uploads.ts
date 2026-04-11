@@ -9,7 +9,7 @@ import { compressImage } from "../utils/compress-image";
 export type Upload = {
   name: string;
   file: File;
-  abortController: AbortController;
+  abortController?: AbortController;
   status: 'inProgress' | 'completed' | 'error' | 'canceled';
   originalSizeInBytes: number;
   compressedSizeInBytes?: number;
@@ -21,6 +21,7 @@ type UploadState = {
   uploads: Map<string, Upload>
   addUploads: (files: File[]) => void;
   cancelUpload: (uplaodId: string) => void;
+  retryUpload: (uplaodId: string) => void;
 }
 
 enableMapSet();
@@ -42,6 +43,16 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
 
       if (!upload) return;
 
+      const abortController = new AbortController();
+
+      updateUpload(uploadId, {
+        uploadSizeInBytes: 0,
+        compressedSizeInBytes: undefined,
+        remoteUrl: undefined,
+        abortController,
+        status: 'inProgress',
+      })
+
       try {
         const compressedFile = await compressImage({
           file: upload.file,
@@ -59,7 +70,7 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
               updateUpload(uploadId, { uploadSizeInBytes: sizeInBytes });
             }
           },
-          { signal: upload.abortController.signal },
+          { signal: abortController.signal },
         );
 
         updateUpload(uploadId, { status: 'completed', remoteUrl: url });
@@ -78,18 +89,20 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
 
       if (!upload) return;
 
-      upload.abortController.abort();
+      upload.abortController?.abort();
+    }
+
+    function retryUpload(uplaodId: string) {
+      processUpload(uplaodId);
     }
 
     function addUploads(files: File[]) {
       for (const file of files) {
         const uploadId = crypto.randomUUID();
-        const abortController = new AbortController();
 
         const upload: Upload = {
           name: file.name,
           file,
-          abortController,
           status: 'inProgress',
           originalSizeInBytes: file.size,
           uploadSizeInBytes: 0,
@@ -107,6 +120,7 @@ export const useUploads = create<UploadState, [["zustand/immer", never]]>(
       uploads: new Map<string, Upload>(),
       addUploads,
       cancelUpload,
+      retryUpload,
     }
   })
 )
